@@ -1,0 +1,235 @@
+CONFIG FCMEN = ON
+CONFIG LVP = OFF
+CONFIG BOR4V = BOR40V
+CONFIG WRT = OFF
+
+; Variables en memoria RAM
+PSECT udata
+fib_array:  DS 14    ; Arreglo para términos Fibonacci (0-13)
+unidades:   DS 1     ; Dígito unidades (0-9)
+decenas:    DS 1     ; Dígito decenas (0-9)
+centenas:   DS 1     ; Dígito centenas (0-9)
+temp1:      DS 1     ; Variable temporal 1
+temp2:      DS 1     ; Variable temporal 2
+contador:   DS 1     ; Contador para cálculos
+
+; Vector de reset (IMPORTANTE: Dirección exacta 0x0000)
+PSECT code, class=CODE, delta=2, abs
+ORG 0x0000
+    goto    main
+
+; Programa principal
+ORG 0x0020
+main:
+    ; Configuración del oscilador interno a 8MHz
+    banksel OSCCON
+    movlw   0x71        ; 01110001b = 8MHz
+    movwf   OSCCON
+    
+    ; Configuración de puertos de E/S
+    banksel TRISA
+    movlw   0x0F        ; RA0-RA3 como entradas
+    movwf   TRISA
+    clrf    TRISB       ; PORTB como salida (display unidades)
+    clrf    TRISC       ; PORTC como salida (display decenas)
+    clrf    TRISD       ; PORTD como salida (display centenas)
+    
+    ; Configuración de puertos como digitales
+    banksel ANSEL
+    clrf    ANSEL       ; Deshabilitar entradas analógicas
+    clrf    ANSELH      ; Deshabilitar entradas analógicas
+    
+    ; Inicialización de puertos
+    banksel PORTA
+    clrf    PORTA
+    clrf    PORTB
+    clrf    PORTC
+    clrf    PORTD
+    
+    ; Calcular los términos de Fibonacci
+    call    calcular_fibonacci
+    
+main_loop:
+    ; Leer entrada de selección (PORTA bits 0-3)
+    banksel PORTA
+    movf    PORTA, W
+    andlw   0x0F        ; Máscara para usar solo bits 0-3
+    movwf   temp1       ; Guardar valor seleccionado
+    
+    ; Validar rango (0-13)
+    movlw   0x0E        ; 14 decimal
+    subwf   temp1, W    
+    btfsc   STATUS, 0   ; Saltar si temp1 < 14
+    goto    ajustar_indice
+    goto    obtener_termino
+    
+ajustar_indice:
+    movlw   0x0D        ; Usar 13 como máximo
+    movwf   temp1
+    
+obtener_termino:
+    ; Obtener la dirección base del arreglo
+    movlw   LOW(fib_array)
+    movwf   FSR         ; FSR apunta al inicio del arreglo
+    
+    ; Agregar offset
+    movf    temp1, W    ; W = índice seleccionado
+    addwf   FSR, F      ; FSR = dirección base + índice
+    
+    ; Leer el valor de Fibonacci
+    movf    INDF, W     ; W = valor en la dirección FSR
+    movwf   temp2       ; Guardar valor para procesar
+    
+    ; Convertir a dígitos (centenas, decenas, unidades)
+    call    separar_digitos
+    
+    ; Convertir dígitos a patrones 7-segmentos y mostrar
+    movf    unidades, W
+    call    convertir_7seg
+    movwf   PORTB       ; Mostrar en display unidades
+    
+    movf    decenas, W
+    call    convertir_7seg
+    movwf   PORTC       ; Mostrar en display decenas
+    
+    movf    centenas, W
+    call    convertir_7seg
+    movwf   PORTD       ; Mostrar en display centenas
+    
+    ; Retardo para estabilidad
+    call    retardo
+    
+    ; Ciclo infinito
+    goto    main_loop
+
+; Subrutina: Cálculo de la secuencia Fibonacci (14 términos)
+calcular_fibonacci:
+    ; Términos iniciales
+    movlw   0
+    movwf   fib_array       ; F(0) = 0
+    movlw   1
+    movwf   fib_array+1     ; F(1) = 1
+    
+    ; Inicializar contador en 2
+    movlw   2
+    movwf   contador
+    
+calc_fib_loop:
+    ; Calcular dirección de F(n-2)
+    movlw   LOW(fib_array)  ; Dirección base
+    movwf   FSR             ; FSR = dirección base
+    
+    ; Sumar contador - 2 a FSR
+    movf    contador, W
+    addwf   FSR, F          ; FSR += contador
+    movlw   2
+    subwf   FSR, F          ; FSR -= 2, ahora FSR apunta a F(n-2)
+    
+    ; Leer F(n-2)
+    movf    INDF, W
+    movwf   temp1           ; temp1 = F(n-2)
+    
+    ; Siguiente posición para F(n-1)
+    incf    FSR, F          ; FSR apunta a F(n-1)
+    
+    ; Leer F(n-1)
+    movf    INDF, W         ; W = F(n-1)
+    
+    ; Calcular F(n) = F(n-1) + F(n-2)
+    addwf   temp1, W        ; W = F(n-1) + F(n-2)
+    movwf   temp2           ; temp2 = F(n-1) + F(n-2)
+    
+    ; Calcular dirección de F(n)
+    movlw   LOW(fib_array)  ; Dirección base
+    movwf   FSR             ; FSR = dirección base
+    movf    contador, W     ; W = contador
+    addwf   FSR, F          ; FSR = dirección base + contador
+    
+    ; Guardar F(n)
+    movf    temp2, W
+    movwf   INDF            ; F(n) = F(n-1) + F(n-2)
+    
+    ; Incrementar contador
+    incf    contador, F
+    
+    ; Verificar si hemos calculado todos los términos
+    movlw   14              ; 14 términos (0 a 13)
+    subwf   contador, W
+    btfss   STATUS, 0       ; Saltar si contador >= 14
+    goto    calc_fib_loop
+    
+    return
+
+; Subrutina: Separar número en dígitos (centenas, decenas, unidades)
+separar_digitos:
+    ; Inicializar contadores
+    clrf    centenas
+    clrf    decenas
+    clrf    unidades
+    
+    ; Copiar número a procesar
+    movf    temp2, W
+    movwf   temp1
+    
+    ; Extraer centenas
+centenas_loop:
+    movlw   100
+    subwf   temp1, W        ; W = temp1 - 100
+    btfss   STATUS, 0       ; Saltar si temp1 >= 100
+    goto    fin_centenas
+    
+    ; Si llegamos aquí, temp1 >= 100
+    movwf   temp1           ; temp1 = temp1 - 100
+    incf    centenas, F     ; centenas++
+    goto    centenas_loop
+    
+fin_centenas:
+    ; Extraer decenas
+decenas_loop:
+    movlw   10
+    subwf   temp1, W        ; W = temp1 - 10
+    btfss   STATUS, 0       ; Saltar si temp1 >= 10
+    goto    fin_decenas
+    
+    ; Si llegamos aquí, temp1 >= 10
+    movwf   temp1           ; temp1 = temp1 - 10
+    incf    decenas, F      ; decenas++
+    goto    decenas_loop
+    
+fin_decenas:
+    ; Las unidades son el residuo en temp1
+    movf    temp1, W
+    movwf   unidades
+    
+    return
+
+; Subrutina: Convertir dígito a patrón 7-segmentos (cátodo común)
+convertir_7seg:
+    addwf   PCL, F          ; Salto calculado para tabla
+    retlw   0x3F            ; 0: a,b,c,d,e,f
+    retlw   0x06            ; 1: b,c
+    retlw   0x5B            ; 2: a,b,d,e,g
+    retlw   0x4F            ; 3: a,b,c,d,g
+    retlw   0x66            ; 4: b,c,f,g
+    retlw   0x6D            ; 5: a,c,d,f,g
+    retlw   0x7D            ; 6: a,c,d,e,f,g
+    retlw   0x07            ; 7: a,b,c
+    retlw   0x7F            ; 8: a,b,c,d,e,f,g
+    retlw   0x6F            ; 9: a,b,c,d,f,g
+
+; Subrutina: Retardo simple
+retardo:
+    movlw   0xFF
+    movwf   temp1           ; Contador externo = 255
+retardo_ext:
+    movlw   0xFF
+    movwf   temp2           ; Contador interno = 255
+retardo_int:
+    decfsz  temp2, F        ; Decrementar contador interno
+    goto    retardo_int     ; Si no es cero, repetir
+    decfsz  temp1, F        ; Decrementar contador externo
+    goto    retardo_ext     ; Si no es cero, repetir
+    
+    return
+
+END
