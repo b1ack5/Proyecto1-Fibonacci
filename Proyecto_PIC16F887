@@ -1,3 +1,17 @@
+; Programa para PIC16F887: Secuencia Fibonacci en displays 7 segmentos
+; Optimizado para el simulador MPLAB X
+
+#include <xc.inc>
+
+; Configuración del PIC (bits de configuración)
+CONFIG FOSC = INTRC_NOCLKOUT
+CONFIG WDTE = OFF
+CONFIG PWRTE = OFF
+CONFIG MCLRE = ON
+CONFIG CP = OFF
+CONFIG CPD = OFF
+CONFIG BOREN = ON
+CONFIG IESO = ON
 CONFIG FCMEN = ON
 CONFIG LVP = OFF
 CONFIG BOR4V = BOR40V
